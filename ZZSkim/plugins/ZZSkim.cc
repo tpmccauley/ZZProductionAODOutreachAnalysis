@@ -17,22 +17,18 @@
 //
 
 
-// system include files
 #include <memory>
 
-// user include files
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/stream/EDFilter.h"
-
 #include "FWCore/Framework/interface/Event.h"
 #include "FWCore/Framework/interface/MakerMacros.h"
-
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/Utilities/interface/StreamID.h"
+#include "FWCore/Utilities/interface/InputTag.h"
 
-//
-// class declaration
-//
+#include "DataFormats/PatCandidates/interface/Electron.h"
+#include "DataFormats/PatCandidates/interface/Muon.h"
 
 class ZZSkim : public edm::stream::EDFilter<> {
    public:
@@ -52,66 +48,88 @@ class ZZSkim : public edm::stream::EDFilter<> {
       //virtual void endLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&) override;
 
       // ----------member data ---------------------------
+
+      edm::InputTag electronInputTag_;
+      edm::InputTag muonInputTag_;
+ 
+      edm::EDGetTokenT<std::vector<pat::Electron> > electronToken_;
+      edm::EDGetTokenT<std::vector<pat::Muon> > muonToken_;
+
 };
 
-//
-// constants, enums and typedefs
-//
-
-//
-// static data member definitions
-//
-
-//
-// constructors and destructor
-//
-ZZSkim::ZZSkim(const edm::ParameterSet& iConfig)
+ZZSkim::ZZSkim(const edm::ParameterSet& iConfig) :
+electronInputTag_(iConfig.getParameter<edm::InputTag>("electronTag")),
+muonInputTag_(iConfig.getParameter<edm::InputTag>("muonTag"))
 {
-   //now do what ever initialization is needed
-
+        electronToken_ = consumes<std::vector<pat::Electron> >(electronInputTag_);
+	muonToken_ = consumes<std::vector<pat::Muon> >(muonInputTag_);
+	
 }
-
 
 ZZSkim::~ZZSkim()
-{
- 
-   // do anything here that needs to be done at destruction time
-   // (e.g. close files, deallocate resources etc.)
+{}
 
-}
-
-
-//
-// member functions
-//
-
-// ------------ method called on each new Event  ------------
 bool
 ZZSkim::filter(edm::Event& iEvent, const edm::EventSetup& iSetup)
 {
    using namespace edm;
-#ifdef THIS_IS_AN_EVENT_EXAMPLE
-   Handle<ExampleData> pIn;
-   iEvent.getByLabel("example",pIn);
-#endif
 
-#ifdef THIS_IS_AN_EVENTSETUP_EXAMPLE
-   ESHandle<SetupData> pSetup;
-   iSetup.get<SetupRecord>().get(pSetup);
-#endif
+   edm::Handle<std::vector<pat::Electron> > electrons;
+   iEvent.getByToken(electronToken_, electrons);
+ 
+   edm::Handle<std::vector<pat::Muon> > muons;
+   iEvent.getByToken(muonToken_, muons);
+
+   unsigned int nElectron = 0;
+   unsigned int nMuon = 0;
+
+   nElectron = electrons->size();
+   nMuon = muons->size();
+
+   if ( (nElectron+nMuon) < 4 )
+	return false;
+
+   for ( std::vector<pat::Electron>::const_iterator e = electrons->begin(), eEnd = electrons->end(); 
+          e != eEnd; ++e )
+    {   
+	std::cout<<"electron"<<std::endl;
+
+      std::cout<<"  pt, eta, phi, charge: "
+	<< e->pt()
+	<< e->eta()
+	<< e->phi()
+	<< e->charge() 
+	<< std::endl;
+ 
+      }
+
+
+    for ( std::vector<pat::Muon>::const_iterator m = muons->begin(), mEnd = muons->end(); 
+         m != mEnd; ++m )
+  {   
+	std::cout<<"muon"<<std::endl; 
+
+	std::cout<<"  pt, eta, phi, charge: "
+          << m->pt()
+          << m->eta()
+          << m->phi()
+          << m->charge() 
+          << std::endl;
+  }
+
+      
+
    return true;
+
 }
 
-// ------------ method called once each stream before processing any runs, lumis or events  ------------
 void
 ZZSkim::beginStream(edm::StreamID)
-{
-}
+{}
 
-// ------------ method called once each stream after processing all runs, lumis and events  ------------
 void
-ZZSkim::endStream() {
-}
+ZZSkim::endStream() 
+{}
 
 // ------------ method called when starting to processes a run  ------------
 /*
@@ -154,5 +172,5 @@ ZZSkim::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   desc.setUnknown();
   descriptions.addDefault(desc);
 }
-//define this as a plug-in
+
 DEFINE_FWK_MODULE(ZZSkim);
