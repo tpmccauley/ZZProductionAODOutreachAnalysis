@@ -1,22 +1,3 @@
-// -*- C++ -*-
-//
-// Package:    ZZProductionAODOutreachAnalysis/ZZSkim
-// Class:      ZZSkim
-// 
-/**\class ZZSkim ZZSkim.cc ZZProductionAODOutreachAnalysis/ZZSkim/plugins/ZZSkim.cc
-
- Description: [one line class summary]
-
- Implementation:
-     [Notes on implementation]
-*/
-//
-// Original Author:  Thomas McCauley
-//         Created:  Tue, 11 Jan 2022 12:23:27 GMT
-//
-//
-
-
 #include <memory>
 
 #include "FWCore/Framework/interface/Frameworkfwd.h"
@@ -29,6 +10,8 @@
 
 #include "DataFormats/PatCandidates/interface/Electron.h"
 #include "DataFormats/PatCandidates/interface/Muon.h"
+#include "DataFormats/VertexReco/interface/VertexFwd.h"
+#include "DataFormats/VertexReco/interface/Vertex.h"
 
 class ZZSkim : public edm::stream::EDFilter<> {
    public:
@@ -42,28 +25,24 @@ class ZZSkim : public edm::stream::EDFilter<> {
       virtual bool filter(edm::Event&, const edm::EventSetup&) override;
       virtual void endStream() override;
 
-      //virtual void beginRun(edm::Run const&, edm::EventSetup const&) override;
-      //virtual void endRun(edm::Run const&, edm::EventSetup const&) override;
-      //virtual void beginLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&) override;
-      //virtual void endLuminosityBlock(edm::LuminosityBlock const&, edm::EventSetup const&) override;
-
-      // ----------member data ---------------------------
-
       edm::InputTag electronInputTag_;
       edm::InputTag muonInputTag_;
+      edm::InputTag vertexInputTag_;
  
       edm::EDGetTokenT<std::vector<pat::Electron> > electronToken_;
       edm::EDGetTokenT<std::vector<pat::Muon> > muonToken_;
+      edm::EDGetTokenT<reco::VertexCollection> vertexToken_;
 
 };
 
 ZZSkim::ZZSkim(const edm::ParameterSet& iConfig) :
 electronInputTag_(iConfig.getParameter<edm::InputTag>("electronTag")),
-muonInputTag_(iConfig.getParameter<edm::InputTag>("muonTag"))
+muonInputTag_(iConfig.getParameter<edm::InputTag>("muonTag")),
+vertexInputTag_(iConfig.getParameter<edm::InputTag>("vertexTag"))
 {
         electronToken_ = consumes<std::vector<pat::Electron> >(electronInputTag_);
 	muonToken_ = consumes<std::vector<pat::Muon> >(muonInputTag_);
-	
+        vertexToken_ = consumes<reco::VertexCollection>(vertexInputTag_);
 }
 
 ZZSkim::~ZZSkim()
@@ -72,8 +51,15 @@ ZZSkim::~ZZSkim()
 bool
 ZZSkim::filter(edm::Event& iEvent, const edm::EventSetup& iSetup)
 {
-   using namespace edm;
+   edm::Handle<reco::VertexCollection> vertices;
+   iEvent.getByToken(vertexToken_, vertices);
 
+   if ( vertices->empty() ) {
+     return false;
+   }
+
+   const reco::Vertex &pv = vertices->front();
+   
    edm::Handle<std::vector<pat::Electron> > electrons;
    iEvent.getByToken(electronToken_, electrons);
  
@@ -86,41 +72,122 @@ ZZSkim::filter(edm::Event& iEvent, const edm::EventSetup& iSetup)
    nElectron = electrons->size();
    nMuon = muons->size();
 
-   if ( (nElectron+nMuon) < 4 )
+   // Reject if fewer than 4 leptons
+   if ( (nElectron+nMuon) < 4 ) {
 	return false;
+   }
 
-   for ( std::vector<pat::Electron>::const_iterator e = electrons->begin(), eEnd = electrons->end(); 
-          e != eEnd; ++e )
+   // We want at least one lepton to have a pt > 20 GeV
+   // and for next one to have a pt > 10 GeV
+   bool pt_gt20 = false;
+   bool pt_gt10 = false;	
+
+   std::vector<pat::Electron> my_electrons;
+   std::vector<pat::Muon> my_muons;
+
+   for ( const pat::Electron &e: *electrons )
     {   
-	std::cout<<"electron"<<std::endl;
+       auto pt = e.pt();
 
-      std::cout<<"  pt, eta, phi, charge: "
-	<< e->pt()
-	<< e->eta()
-	<< e->phi()
-	<< e->charge() 
-	<< std::endl;
- 
-      }
+	if ( pt < 7 || 
+             fabs(e.eta()) > 2.5 ) {
+          continue;
+        }
+
+        auto dxy = e.bestTrack()->dxy(pv.position());
+	auto dz = e.bestTrack()->dz(pv.position());
+        auto dxyErr = e.bestTrack()->dxyError();
+        auto dzErr = e.bestTrack()->dzError();
+
+	auto sip3d = sqrt(dxy*dxy + dz*dz);
+        sip3d /= sqrt(dxyErr*dxyErr + dzErr*dzErr);
+
+        if ( fabs(dxy) > 0.5 || fabs(dz) > 1.0 || sip3d > 4 ) {
+          continue;
+        }
+
+	auto iso = e.ecalPFClusterIso();
+
+	if ( iso/pt > 0.35 ) {
+          continue;
+        }
+
+	if ( pt > 20 ) {
+	  pt_gt20 = true;
+        } 
+
+	if ( pt > 10 && pt < 20 ) {
+          pt_gt10 = true;
+        }
+
+        my_electrons.push_back(e);
+
+    }
+
+    for ( const pat::Muon &m: *muons )
+    {   
+        auto pt = m.pt();
+
+        if ( pt < 5 || 
+             fabs(m.eta()) > 2.4 ) {
+          continue;
+        }
+
+        auto dxy = m.bestTrack()->dxy(pv.position());
+        auto dz = m.bestTrack()->dz(pv.position());
+        auto dxyErr = m.bestTrack()->dxyError();
+        auto dzErr = m.bestTrack()->dzError();
+
+        auto sip3d = sqrt(dxy*dxy + dz*dz);
+        sip3d /= sqrt(dxyErr*dxyErr + dzErr*dzErr);
+
+        if ( fabs(dxy) > 0.5 || fabs(dz) > 1.0 || sip3d > 4 ) {
+          continue;
+        }
+
+	auto iso03 = m.pfIsolationR03();
+        //auto iso04 = m.pfIsolationR04();
+
+        auto relIso03 = (iso03.sumChargedHadronPt + iso03.sumNeutralHadronEt + iso03.sumPhotonEt)/pt;
+        //auto relIso04 = (iso04.sumChargedHadronPt + iso04.sumNeutralHadronEt + iso04.sumPhotonEt)/pt;
+         
+        if ( relIso03 > 0.35 ) {
+          continue;
+        }
+
+        if ( pt > 20 ) { 
+          pt_gt20 = true;
+        }
+
+        if ( pt > 10 && pt < 20 ) {
+          pt_gt10 = true;
+        }
+        
+	my_muons.push_back(m);
+
+    }
+
+    if ( ! pt_gt20 || ! pt_gt10 ) {
+       return false;
+    }
 
 
-    for ( std::vector<pat::Muon>::const_iterator m = muons->begin(), mEnd = muons->end(); 
-         m != mEnd; ++m )
-  {   
-	std::cout<<"muon"<<std::endl; 
+    // Possible 4mu
+    if ( my_muons.size() >= 4 ) {
+      return true;
+    }
 
-	std::cout<<"  pt, eta, phi, charge: "
-          << m->pt()
-          << m->eta()
-          << m->phi()
-          << m->charge() 
-          << std::endl;
-  }
+    // Possible 2e2mu 
+    if ( my_muons.size() >=2 && my_electrons.size() >= 2 ) {
+      return true;
+    }
 
-      
-
-   return true;
-
+    // Possible 4e
+    if ( my_electrons.size() >= 4 ) {
+       return true;
+    }
+	      
+    return false;
 }
 
 void
